@@ -147,9 +147,9 @@ Expected:
 #### 3. Check SELinux denials
 
 ```bash
-adb logcat -d -s audit | grep v4a
+adb logcat -d -b all | grep -a 'avc: *denied' | grep v4a
 # or, broader:
-adb logcat -d | grep -E 'avc.*denied.*(v4a|soundfx)'
+adb logcat -d -b all | grep -aE 'avc.*denied.*(v4a|soundfx)'
 ```
 
 If you see `avc: denied` lines naming the audio process and the driver `.so`, the live policy injection from `post-fs-data.sh` did not stick. This is the single most common cause of "module installs cleanly but audio is unprocessed." The legacy effect runs inside `audioserver` (or the legacy audio HAL), not the AIDL service.
@@ -252,7 +252,7 @@ viper.control    u:object_r:viper_control_service:s0
 Check for denials while toggling the master switch or dragging a slider in the app:
 
 ```bash
-adb logcat -d -s audit | grep -iE 'viper.control|service_manager'
+adb logcat -d -b all | grep -a 'avc: *denied' | grep -iE 'viper.control|service_manager'
 # or, broader:
 adb shell su -c 'dmesg | grep -iE "avc.*viper.control"'
 ```
@@ -261,6 +261,19 @@ Expected: **no output.** Common denials and what they mean:
 
 - `denied { add } ... name=viper.control ... tclass=service_manager`: the HAL could not register the service
 - `denied { find } ... name=viper.control scontext=u:r:untrusted_app ...`: the app could not look up the service
+- `denied { call } ... scontext=u:r:untrusted_app ... tcontext=u:r:<audio HAL domain> tclass=binder`: the app found the service but cannot call it (the app log shows `getStatus failed: Transaction failed ...`)
+
+> [!NOTE]
+> **Use `-b all`.** On some ROMs the SELinux audit lines are written to the `events` log buffer, so a plain `adb logcat -d` (and `adb logcat -d -s audit`) can miss most or all of them even while denials are happening. `dmesg` is an equivalent source.
+
+> [!NOTE]
+> **The audio HAL's SELinux domain is vendor-specific.** It is typically `hal_audio_default` on AOSP/Pixel-style devices but, for example, `mtk_hal_audio` on MediaTek. The domain in the `scontext` of the `add` denial above is the one the policy must allow. To see which domain your HAL runs as:
+>
+> ```bash
+> adb shell ps -AZ | grep audio.service
+> ```
+>
+> A policy tool that exits with `0` does not prove that a rule matched anything: for example, `ksud sepolicy apply` (observed with ksud 3.4.2) accepts and prints a rule naming a domain that does not exist on the device and still returns `0`. So a `Policy inject applied (rc=0)` line in the module log is not a substitute for the checks in this section; confirm with `service list | grep viper.control`.
 
 #### 4. Filter logcat by the audio HAL process
 
